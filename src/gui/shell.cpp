@@ -20,17 +20,7 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	m_resizing(false), m_logo(QPixmap(":/neovim.png")),
 	m_neovimBusy(false)
 {
-	QFont f;
-	f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferDefault | QFont::ForceIntegerMetrics) );
-	f.setStyleHint(QFont::TypeWriter);
-	f.setFamily("DejaVu Sans Mono");
-	f.setFixedPitch(true);
-	f.setPointSize(11);
-	f.setKerning(false);
-	f.setFixedPitch(true);
-
-	m_font = f;
-	m_fm = new QFontMetrics(m_font);
+	setGuiFont("DejaVu Sans Mono:h11");
 
 	m_image = QImage(neovimSize(), QImage::Format_ARGB32_Premultiplied);
 
@@ -63,6 +53,53 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 		neovimIsReady();
 	}
 }
+
+/**
+ * Set the GUI font, or display the current font
+ */
+bool Shell::setGuiFont(const QString& fdesc)
+{
+	if (fdesc.isEmpty()) {
+		QFontInfo fi(m_font);
+		QByteArray desc = m_nvim->encode(QString("%1:h%2\n").arg(fi.family()).arg(m_font.pointSize()));
+		m_nvim->neovimObject()->vim_out_write(desc);
+		return true;
+	}
+	QStringList attrs = fdesc.split(':');
+	if (attrs.size() < 1) {
+		m_nvim->neovimObject()->vim_report_error("Invalid font");
+		return false;
+	}
+
+	QFont f;
+	f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferDefault | QFont::ForceIntegerMetrics) );
+	f.setStyleHint(QFont::TypeWriter);
+	f.setFamily(attrs.at(0));
+	f.setFixedPitch(true);
+	f.setKerning(false);
+	f.setFixedPitch(true);
+
+	foreach(QString attr, attrs) {
+		if (attr.size() >= 2 && attr[0] == 'h') {
+			bool ok = false;
+			int height = attr.mid(1).toInt(&ok);
+			if (!ok) {
+				m_nvim->neovimObject()->vim_report_error("Invalid font height");
+				return false;
+			}
+			f.setPointSize(height);
+		}
+	}
+
+	m_font = f;
+	m_fm = new QFontMetrics(m_font);
+
+	if (m_attached) {
+		requestResize(size());
+	}
+	return true;
+}
+
 
 Shell::~Shell()
 {
@@ -152,6 +189,9 @@ void Shell::neovimIsReady()
 
 	connect(m_nvim->neovimObject(), &Neovim::on_ui_try_resize,
 			this, &Shell::neovimResizeFinished);
+
+	// Setup Guifont command
+	m_nvim->neovimObject()->vim_subscribe("setguifont");
 }
 
 void Shell::neovimError(NeovimConnector::NeovimError err)
@@ -464,7 +504,11 @@ void Shell::handleBusy(bool busy)
 // FIXME: fix QVariant type conversions
 void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList& args)
 {
-	if (name != "redraw") {
+	if (name == "setguifont" && args.size() == 1) {
+		QString fdesc = m_nvim->decode(args.at(0).toByteArray());
+		setGuiFont(fdesc);
+		return;
+	} else if (name != "redraw") {
 		return;
 	}
 
