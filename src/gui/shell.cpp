@@ -91,6 +91,15 @@ bool Shell::setGuiFont(const QString& fdesc)
 		}
 	}
 
+	QFontInfo fi(f);
+	if (fi.family().compare(f.family(), Qt::CaseInsensitive) != 0 &&
+		f.family().compare("Monospace", Qt::CaseInsensitive) != 0) {
+		return false;
+	}
+	if ( !fi.fixedPitch() ) {
+		return false;
+	}
+
 	m_font = f;
 	m_fm = new QFontMetrics(m_font);
 
