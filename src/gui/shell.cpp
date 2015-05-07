@@ -587,15 +587,10 @@ void Shell::keyPressEvent(QKeyEvent *ev)
 	// FIXME: bytes might not be written, and need to be buffered
 }
 
-void Shell::resizeEvent(QResizeEvent *ev)
+void Shell::requestResize(const QSize& size)
 {
-	if (!m_attached) {
-		QWidget::resizeEvent(ev);
-		return;
-	}
-	// Call Neovim to resize
-	uint64_t cols = ev->size().width()/neovimCellWidth();
-	uint64_t rows = ev->size().height()/neovimRowHeight();
+	uint64_t cols = size.width()/neovimCellWidth();
+	uint64_t rows = size.height()/neovimRowHeight();
 
 	// Neovim will ignore simultaneous calls to ui_try_resize
 	if (!m_resizing && m_nvim && m_attached &&
@@ -603,6 +598,17 @@ void Shell::resizeEvent(QResizeEvent *ev)
 		m_nvim->neovimObject()->ui_try_resize(cols, rows);
 		m_resizing = true;
 	}
+}
+
+void Shell::resizeEvent(QResizeEvent *ev)
+{
+	if (!m_attached) {
+		QWidget::resizeEvent(ev);
+		return;
+	}
+	// Call Neovim to resize
+	requestResize(ev->size());
+
 	QWidget::resizeEvent(ev);
 }
 

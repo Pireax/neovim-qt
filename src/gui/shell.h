@@ -35,6 +35,7 @@ protected slots:
 	void neovimError(NeovimConnector::NeovimError);
 	void neovimExited(int);
 	void neovimResizeFinished();
+	void requestResize(const QSize& size);
 
 protected:
 	void tooltip(const QString& text);
