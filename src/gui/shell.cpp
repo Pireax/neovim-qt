@@ -199,8 +199,8 @@ void Shell::neovimIsReady()
 	connect(m_nvim->neovimObject(), &Neovim::on_ui_try_resize,
 			this, &Shell::neovimResizeFinished);
 
-	// Setup Guifont command
-	m_nvim->neovimObject()->vim_subscribe("setguifont");
+	// Subscribe to GUI events
+	m_nvim->neovimObject()->vim_subscribe("Gui");
 }
 
 void Shell::neovimError(NeovimConnector::NeovimError err)
@@ -513,9 +513,12 @@ void Shell::handleBusy(bool busy)
 // FIXME: fix QVariant type conversions
 void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList& args)
 {
-	if (name == "setguifont" && args.size() == 1) {
-		QString fdesc = m_nvim->decode(args.at(0).toByteArray());
-		setGuiFont(fdesc);
+	if (name == "Gui" && args.size() > 0) {
+		QString guiEvName = m_nvim->decode(args.at(0).toByteArray());
+		if (guiEvName == "SetFont" && args.size() == 2) {
+			QString fdesc = m_nvim->decode(args.at(1).toByteArray());
+			setGuiFont(fdesc);
+		}
 		return;
 	} else if (name != "redraw") {
 		return;
