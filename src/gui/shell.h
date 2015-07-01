@@ -2,18 +2,15 @@
 #define NEOVIM_QT_SHELL
 
 #include <QWidget>
-#include <qopenglwidget.h>
-#include <qopenglfunctions_2_0.h>
 #include <QVariantList>
 #include <QFont>
 #include <QBackingStore>
 #include <QLabel>
 #include "neovimconnector.h"
-#include <QOpenGLPaintDevice>
 
 namespace NeovimQt {
 
-class Shell : public QOpenGLWidget, protected QOpenGLFunctions_2_0
+class Shell: public QWidget
 {
 	Q_OBJECT
 	Q_PROPERTY(bool neovimBusy READ neovimBusy() NOTIFY neovimBusy())
@@ -55,19 +52,17 @@ protected:
 	void setNeovimCursor(quint64 col, quint64 row);
 	void setupPainter(QPainter&);
 
-	virtual void initializeGL() Q_DECL_OVERRIDE;
-	virtual void resizeGL(int w, int h) Q_DECL_OVERRIDE;
-	virtual void paintGL() Q_DECL_OVERRIDE;
 	virtual void resizeEvent(QResizeEvent *ev) Q_DECL_OVERRIDE;
 	virtual void keyPressEvent(QKeyEvent *ev) Q_DECL_OVERRIDE;
         void paintLogo(QPainter&);
+	virtual void paintEvent(QPaintEvent *ev) Q_DECL_OVERRIDE;
 	virtual void changeEvent(QEvent *ev) Q_DECL_OVERRIDE;
 	virtual void closeEvent(QCloseEvent *ev) Q_DECL_OVERRIDE;
 
 	virtual void handleResize(uint64_t cols, uint64_t rows);
 	virtual void handlePut(const QVariantList& args, QPainter&);
 	virtual void handleHighlightSet(const QVariantMap& args, QPainter& painter);
-	virtual void handleRedraw(const QByteArray& name, const QVariantList& args, QPainter& painter, QOpenGLPaintDevice& context);
+	virtual void handleRedraw(const QByteArray& name, const QVariantList& args, QPainter& painter);
 	virtual void handleScroll(const QVariantList& args, QPainter& painter);
 	virtual void handleNormalMode(QPainter& painter);
 	virtual void handleInsertMode(QPainter& painter);
