@@ -8,11 +8,13 @@
 #include <QKeyEvent>
 #include "input.h"
 #include "konsole_wcwidth.h"
+#include <qopengltexture.h>
+#include <qopenglpaintdevice.h>
 
 namespace NeovimQt {
 
 Shell::Shell(NeovimConnector *nvim, QWidget *parent)
-:QWidget(parent), m_attached(false), m_nvim(nvim), m_rows(1), m_cols(1),
+:QOpenGLWidget(parent), m_attached(false), m_nvim(nvim), m_rows(1), m_cols(1),
 	m_font_bold(false), m_font_italic(false), m_font_underline(false), m_fm(NULL),
 	m_foreground(Qt::black), m_background(Qt::white),
 	m_hg_foreground(Qt::black), m_hg_background(Qt::white),
@@ -20,6 +22,13 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	m_resizing(false), m_logo(QPixmap(":/neovim.png")),
 	m_neovimBusy(false)
 {
+	QSurfaceFormat format;
+	format.setDepthBufferSize(24);
+	format.setStencilBufferSize(8);
+	format.setVersion(2, 0);
+	format.setProfile(QSurfaceFormat::NoProfile);
+	setFormat(format);
+
 	QFont f;
 	f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferDefault | QFont::ForceIntegerMetrics) );
 	f.setStyleHint(QFont::TypeWriter);
@@ -33,7 +42,7 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	m_fm = new QFontMetrics(m_font);
 
 	m_image = QImage(neovimSize(), QImage::Format_ARGB32_Premultiplied);
-
+	
 	setAttribute(Qt::WA_KeyCompression, false);
 	setAttribute(Qt::WA_OpaquePaintEvent, true);
 
@@ -189,14 +198,7 @@ void Shell::handleResize(uint64_t cols, uint64_t rows)
 	m_scroll_region = QRect(QPoint(0,0), neovimSize());
 
 	if (needs_resize) {
-		QImage new_image = QImage(neovimSize(), QImage::Format_ARGB32_Premultiplied);
-		{
-			// copy the old contents into the new canvas
-			QPainter painter(&new_image);
-			painter.drawImage(QPoint(0,0), m_image);
-		}
-		m_image.swap(new_image);
-		updateGeometry();
+		resizeGL(neovimSize().width(), neovimSize().height());
 		emit neovimResized(neovimSize());
 	}
 }
@@ -286,22 +288,35 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 		// Scroll lines to the top
 		exposed = QRect(QPoint(m_scroll_region.left(), m_scroll_region.bottom()-count*neovimRowHeight()+1),
 				QSize(m_scroll_region.width(), count*neovimRowHeight()));
+
 		rect = QRect(QPoint(m_scroll_region.left(), m_scroll_region.top()+count*neovimRowHeight()),
 				QPoint(m_scroll_region.right(), m_scroll_region.bottom()));
+
 		pos = m_scroll_region.topLeft();
 	} else {
 		count = -count;
 		// Scroll lines to the bottom
 		exposed = QRect(m_scroll_region.topLeft(),
 				QSize(m_scroll_region.width(), count*neovimRowHeight()));
+
 		rect = QRect(m_scroll_region.topLeft(),
 				QPoint(m_scroll_region.right(), m_scroll_region.bottom()-count*neovimRowHeight()));
+
 		pos = m_scroll_region.topLeft();
 		pos.setY(pos.y()+count*neovimRowHeight());
 	}
 
+	
 	QImage copy = m_image.copy(rect);
-	painter.drawImage(pos, copy);
+	painter.drawImage(pos, copy, rect);
+
+	painter.beginNativePainting();
+
+
+
+	painter.endNativePainting();
+
+
 	// Scroll always uses the background color, not the highlight
 	painter.fillRect(exposed, m_background);
 	update(m_scroll_region);
@@ -336,7 +351,7 @@ void Shell::handleSetScrollRegion(const QVariantList& opargs)
 				QPoint((right+1)*neovimCellWidth(), (bot+1)*neovimRowHeight()-1));
 }
 
-void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPainter& painter)
+void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPainter& painter, QOpenGLPaintDevice& context)
 {
 	if (name == "update_fg") {
 		if (opargs.size() != 1 || !opargs.at(0).canConvert<quint64>()) {
@@ -364,7 +379,8 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 
 		painter.end();
 		handleResize(opargs.at(0).toULongLong(), opargs.at(1).toULongLong());
-		painter.begin(&m_image);
+		context.setSize(neovimSize());
+		painter.begin(&context);
 		setupPainter(painter);
 	} else if (name == "clear") {
 		painter.fillRect(rect(), m_background);
@@ -464,7 +480,9 @@ void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList&
 		return;
 	}
 
-	QPainter painter(&m_image);
+	makeCurrent();
+	QOpenGLPaintDevice context(neovimSize());
+	QPainter painter(&context);
 	setupPainter(painter);
 
 	foreach(const QVariant& update_item, args) {
@@ -503,9 +521,12 @@ void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList&
 			}
 
 			const QVariantList& opargs = opargs_var.toList();
-			handleRedraw(name, opargs, painter);
+			handleRedraw(name, opargs, painter, context);
 		}
 	}
+
+	painter.end();
+	doneCurrent();
 #if 0
 	// Dump all paint events as jpg files for debugging
 	static quint64 count = 0;
@@ -529,7 +550,30 @@ void Shell::paintLogo(QPainter& p)
 	}
 }
 
-void Shell::paintEvent(QPaintEvent *ev)
+void Shell::initializeGL()
+{
+	initializeOpenGLFunctions();
+
+	glClearColor(1,1,1,1);
+	glDisable(GL_DEPTH);
+
+	glViewport(0, 0, size().width(), size().height());
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, size().width(), size().height(), 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+}
+
+void Shell::resizeGL(int w, int h)
+{
+	glViewport(0, 0, size().width(), size().height());
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, size().width()*2, size().height()*2, 0, -1, 1);
+}
+
+void Shell::paintGL()
 {
 	QPainter painter(this);
 	if (!m_attached) {
@@ -538,30 +582,13 @@ void Shell::paintEvent(QPaintEvent *ev)
 		return;
 	}
 
-	QRegion imageReg(QRect(QPoint(0,0),neovimSize()));
-	QRegion intersection = imageReg.intersected(ev->region());
-	QRegion diff = ev->region().subtracted(imageReg);
+	QRect cursorRect(neovimCursorTopLeft(), neovimCharSize());
 
-	foreach(QRect rect, intersection.rects()) {
-		painter.drawImage(rect, m_image, rect);
+	if (m_insertMode) {
+		cursorRect.setWidth(2);
 	}
-
-	// Paint margins
-	foreach(QRect rect, diff.rects()) {
-		painter.fillRect( rect, m_background);
-	}
-
-	// paint cursor - we are not actually using Neovim colors yet,
-	// just invert the shell colors by painting white with XoR
-	if (ev->region().contains(neovimCursorTopLeft())) {
-		QRect cursorRect(neovimCursorTopLeft(), neovimCharSize());
-
-		if (m_insertMode) {
-			cursorRect.setWidth(2);
-		}
-		painter.setCompositionMode(QPainter::RasterOp_SourceXorDestination);
-		painter.fillRect(cursorRect, m_cursor_color);
-	}
+	painter.setCompositionMode(QPainter::CompositionMode_Xor);
+	painter.fillRect(cursorRect, m_cursor_color);
 }
 
 void Shell::keyPressEvent(QKeyEvent *ev)
@@ -599,12 +626,12 @@ void Shell::resizeNeovim(const QSize& newSize)
 void Shell::resizeEvent(QResizeEvent *ev)
 {
 	if (!m_attached) {
-		QWidget::resizeEvent(ev);
+		QOpenGLWidget::resizeEvent(ev);
 		return;
 	}
 
 	resizeNeovim(ev->size());
-	QWidget::resizeEvent(ev);
+	QOpenGLWidget::resizeEvent(ev);
 }
 
 /**
