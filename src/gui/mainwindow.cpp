@@ -111,7 +111,8 @@ void MainWindow::neovimWidgetResized(const QSize& newSize)
 		}
 	} else {
 		// Dont use ::adjustSize() here, it does not respect the new sizeHint()
-		resize(sizeHint());
+		// sizeHint() hides the gui with opengl
+		resize(newSize);
 	}
 }
 
