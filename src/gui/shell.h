@@ -4,6 +4,7 @@
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions_2_0>
 #include <QOpenGLPaintDevice>
+#include <QOpenGLFramebufferObject>
 #include <QVariantList>
 #include <QFont>
 #include <QBackingStore>
@@ -76,6 +77,7 @@ protected:
 private:
 	bool m_attached;
         void setAttached(bool);
+		void drawRectangle(int w, int h);
 
 	NeovimConnector *m_nvim;
 	uint64_t m_rows, m_cols;
@@ -86,6 +88,7 @@ private:
 	QFontMetrics *m_fm;
 
 	QImage m_image;
+	QOpenGLFramebufferObject* m_buffer;
 
 	// shell bg/fg - updated through redraw:foreground/background
 	QColor m_foreground, m_background;

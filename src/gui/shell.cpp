@@ -16,7 +16,7 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	m_font_bold(false), m_font_italic(false), m_font_underline(false), m_fm(NULL),
 	m_foreground(Qt::black), m_background(Qt::white),
 	m_hg_foreground(Qt::black), m_hg_background(Qt::white),
-	m_cursor_color(Qt::white), m_cursor_pos(0,0), m_insertMode(false),
+	m_cursor_color(Qt::black), m_cursor_pos(0,0), m_insertMode(false),
 	m_resizing(false), m_logo(QPixmap(":/neovim.png")),
 	m_neovimBusy(false)
 {
@@ -235,8 +235,6 @@ void Shell::handlePut(const QVariantList& args, QPainter& painter)
 	}
 
 	QString text = m_nvim->decode(args.at(0).toByteArray());
-	QRect updateRect(neovimCursorTopLeft(),
-			QSize(neovimCellWidth(), neovimRowHeight()));
 
 	if (!text.isEmpty()) {
 		painter.save();
@@ -254,11 +252,9 @@ void Shell::handlePut(const QVariantList& args, QPainter& painter)
 
 		painter.restore();
 	}
-
-	update(updateRect);
 	// Move cursor ahead
 	m_cursor_pos.setX(m_cursor_pos.x() + 1);
-	update(QRect(neovimCursorTopLeft(), neovimCharSize()));
+	update();
 }
 
 /**
@@ -301,8 +297,48 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 		pos.setY(pos.y()+count*neovimRowHeight());
 	}
 
-	QImage copy = m_image.copy(rect);
-	painter.drawImage(pos, copy);
+	QImage copy = m_buffer->toImage();
+	painter.drawImage(pos, copy, rect);
+
+	// TODO: Rendering to same texture doesnt work, create a ping-pong buffer and swap them
+	
+	//QOpenGLFramebufferObject ping_pong(rect.size());
+
+	//painter.beginNativePainting();
+
+	//ping_pong.bind();
+	//glBindTexture(GL_TEXTURE_2D, m_buffer->texture());
+	//
+	////m_buffer is inverted so texture coordinates dont line up.
+	//glEnable(GL_TEXTURE_2D);
+	//float invWidth = 1.0f / (float)ping_pong.width();
+	//float invHeight = 1.0f / (float)ping_pong.height();
+
+	//glBegin(GL_QUADS);
+	//glTexCoord2f(invWidth * (float)rect.left(),		invHeight * (float)rect.top());		glVertex2f(0, 0);
+	//glTexCoord2f(invWidth * (float)rect.left(),		invHeight * (float)rect.bottom());	glVertex2f(0, rect.height());
+	//glTexCoord2f(invWidth * (float)rect.right(),	invHeight * (float)rect.bottom());	glVertex2f(rect.width(), rect.height());
+	//glTexCoord2f(invWidth * (float)rect.right(),	invHeight * (float)rect.top());		glVertex2f(rect.width(), 0);
+	//glEnd();
+
+	//
+
+	//m_buffer->bind();
+	//glBindTexture(GL_TEXTURE_2D, ping_pong.texture());
+	////glColor3f(1, 0, 0);
+	//glBegin(GL_QUADS);
+	//glTexCoord2f(0, 0); glVertex2f(pos.x(),						pos.y());
+	//glTexCoord2f(0, 1); glVertex2f(pos.x(), pos.y() + neovimSize().height()+1);
+	//glTexCoord2f(1, 1); glVertex2f(pos.x() + rect.width(), pos.y() + neovimSize().height()+1);
+	//glTexCoord2f(1, 0); glVertex2f(pos.x() + rect.width(), pos.y());
+	//glEnd();
+	////glColor3f(1, 1, 1);
+
+	//glBindTexture(GL_TEXTURE_2D, 0);
+	//glDisable(GL_TEXTURE_2D);
+
+	//painter.endNativePainting();
+
 	// Scroll always uses the background color, not the highlight
 	painter.fillRect(exposed, m_background);
 	update(m_scroll_region);
@@ -366,6 +402,7 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 		painter.end();
 		handleResize(opargs.at(0).toULongLong(), opargs.at(1).toULongLong());
 		device.setSize(neovimSize());
+		m_buffer->bind();
 		painter.begin(&device);
 		setupPainter(painter);
 	} else if (name == "clear") {
@@ -378,7 +415,7 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 		QPoint br(neovimWidth()-1, tl.y()+neovimRowHeight()-1);
 		QRect clearRect = QRect(tl, br);
 		painter.fillRect(clearRect, m_background);
-		update(clearRect);
+		update();
 	} else if (name == "cursor_goto"){
 		if (opargs.size() != 2 || !opargs.at(0).canConvert<quint64>() ||
 				!opargs.at(1).canConvert<quint64>()) {
@@ -423,9 +460,8 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 
 void Shell::setNeovimCursor(quint64 row, quint64 col)
 {
-	update(QRect(neovimCursorTopLeft(), neovimCharSize()));
 	m_cursor_pos = QPoint(col, row);
-	update(QRect(neovimCursorTopLeft(), neovimCharSize()));
+	update();
 }
 
 void Shell::handleNormalMode(QPainter& painter)
@@ -467,6 +503,7 @@ void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList&
 	}
 
 	makeCurrent();
+	m_buffer->bind();
 	QOpenGLPaintDevice context(neovimSize());
 	QPainter painter(&context);
 	setupPainter(painter);
@@ -517,6 +554,7 @@ void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList&
 	m_image.save(QString("debug-paint-%1.jpg").arg(count++));
 #endif
 	painter.end();
+	m_buffer->bindDefault();
 	doneCurrent();
 }
 
@@ -539,40 +577,93 @@ void Shell::initializeGL()
 	initializeOpenGLFunctions();
 
 	glClearColor(1, 1, 1, 1);
-	glDisable(GL_DEPTH);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
 
-	glViewport(0, 0, size().width(), size().height());
+	glViewport(0, 0, neovimSize().width(), neovimSize().height());
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	glOrtho(0, size().width(), size().height(), 0, -1, 1);
+	glOrtho(0, neovimSize().width(), neovimSize().height(), 0, -1, 1);
+	// change texture coordinate origin to top-left
+	glMatrixMode(GL_TEXTURE);
+	glLoadIdentity();
+	glTranslatef(0, 1, 0);
+	glScalef(1, -1, 1);
+
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
+
+	m_buffer = new QOpenGLFramebufferObject(neovimSize(), QOpenGLFramebufferObject::CombinedDepthStencil);
 }
 
 void Shell::resizeGL(int w, int h)
 {
-	glViewport(0, 0, size().width(), size().height());
+	glViewport(0, 0, neovimSize().width(), neovimSize().height());
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	glOrtho(0, size().width() * 2, size().height() * 2, 0, -1, 1);
+	glOrtho(0, neovimSize().width(), neovimSize().height(), 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+	QOpenGLFramebufferObject* newBuffer = new QOpenGLFramebufferObject(neovimSize(), QOpenGLFramebufferObject::CombinedDepthStencil);
+
+	newBuffer->bind();
+	QOpenGLPaintDevice context(neovimSize());
+	QPainter painter(&context);
+	painter.drawImage(QPoint(0, 0), m_buffer->toImage());
+	newBuffer->release();
+
+	m_buffer->~QOpenGLFramebufferObject();
+	m_buffer = newBuffer;
 }
 
 void Shell::paintGL()
 {
 	QPainter painter(this);
+	if (m_buffer->isBound())
+		m_buffer->release();
 	if (!m_attached) {
 		painter.fillRect(rect(), Qt::white);
 		paintLogo(painter);
 		return;
 	}
 
+	painter.beginNativePainting();
+
+	glClear(GL_COLOR_BUFFER_BIT);
+	glBindTexture(GL_TEXTURE_2D, m_buffer->texture());
+
+	glEnable(GL_TEXTURE_2D);
+	glBegin(GL_QUADS);
+	//drawRectangle(size().width(), size().height());
+	glTexCoord2f(0, 0); glVertex2f(0, 0);
+	glTexCoord2f(0, 1); glVertex2f(0, m_buffer->height());
+	glTexCoord2f(1, 1); glVertex2f(m_buffer->width(), m_buffer->height());
+	glTexCoord2f(1, 0); glVertex2f(m_buffer->width(), 0);
+	glEnd();
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glDisable(GL_TEXTURE_2D);
+
+	painter.endNativePainting();
+	
 	QRect cursorRect(neovimCursorTopLeft(), neovimCharSize());
 
 	if (m_insertMode) {
 		cursorRect.setWidth(2);
 	}
+
+	// Bitwise composition is not supported with OpenGL
 	painter.setCompositionMode(QPainter::CompositionMode_Xor);
 	painter.fillRect(cursorRect, m_cursor_color);
+}
+
+void Shell::drawRectangle(int w, int h)
+{
+	glTexCoord2f(0, 0); glVertex2f(0, 0);
+	glTexCoord2f(0, 1); glVertex2f(0, h);
+	glTexCoord2f(1, 1); glVertex2f(w, h);
+	glTexCoord2f(1, 0); glVertex2f(w, 0);
 }
 
 void Shell::keyPressEvent(QKeyEvent *ev)
