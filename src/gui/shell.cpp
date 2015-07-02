@@ -279,67 +279,45 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 	QPoint pos;	// Position where the image will be drawn
 	if (count == 0) {
 		return;
-	} else if (count > 0) {
+	}
+	else if (count > 0) {
 		// Scroll lines to the top
-		exposed = QRect(QPoint(m_scroll_region.left(), m_scroll_region.bottom()-count*neovimRowHeight()+1),
-				QSize(m_scroll_region.width(), count*neovimRowHeight()));
-		rect = QRect(QPoint(m_scroll_region.left(), m_scroll_region.top()+count*neovimRowHeight()),
-				QPoint(m_scroll_region.right(), m_scroll_region.bottom()));
+		exposed = QRect(QPoint(m_scroll_region.left(), m_scroll_region.bottom() - count*neovimRowHeight() + 1),
+			QSize(m_scroll_region.width(), count*neovimRowHeight()));
+		rect = QRect(QPoint(m_scroll_region.left(), m_scroll_region.top() + count*neovimRowHeight()),
+			QPoint(m_scroll_region.right(), m_scroll_region.bottom()));
 		pos = m_scroll_region.topLeft();
-	} else {
+	}
+	else {
 		count = -count;
 		// Scroll lines to the bottom
 		exposed = QRect(m_scroll_region.topLeft(),
-				QSize(m_scroll_region.width(), count*neovimRowHeight()));
+			QSize(m_scroll_region.width(), count*neovimRowHeight()));
 		rect = QRect(m_scroll_region.topLeft(),
-				QPoint(m_scroll_region.right(), m_scroll_region.bottom()-count*neovimRowHeight()));
+			QPoint(m_scroll_region.right(), m_scroll_region.bottom() - count*neovimRowHeight()));
 		pos = m_scroll_region.topLeft();
-		pos.setY(pos.y()+count*neovimRowHeight());
+		pos.setY(pos.y() + count*neovimRowHeight());
 	}
 
-	QImage copy = m_buffer->toImage();
-	painter.drawImage(pos, copy, rect);
+	// Coordinate system resets to bottom-left in blitFramebuffer, inverting y axis.
 
-	// TODO: Rendering to same texture doesnt work, create a ping-pong buffer and swap them
+	int bot = rect.bottom();
+	rect.setBottom(neovimSize().height() - rect.top() - 1);
+	rect.setTop(neovimSize().height() - bot - 1);
+	pos.setY(neovimSize().height() - pos.y() - rect.height());
 
-	//QOpenGLFramebufferObject ping_pong(rect.size());
+	QOpenGLFramebufferObject ping_pong(m_buffer->size());
 
-	//painter.beginNativePainting();
+	painter.beginNativePainting();
 
-	//ping_pong.bind();
-	//glBindTexture(GL_TEXTURE_2D, m_buffer->texture());
-	//
-	////m_buffer is inverted so texture coordinates dont line up.
-	//glEnable(GL_TEXTURE_2D);
-	//float invWidth = 1.0f / (float)m_buffer->width();
-	//float invHeight = 1.0f / (float)m_buffer->height();
+	glViewport(0, 0, ping_pong.width(), ping_pong.height());
+	QOpenGLFramebufferObject::blitFramebuffer(&ping_pong, rect, m_buffer, rect);
 
-	//glBegin(GL_QUADS);
-	//glTexCoord2f(invWidth * (float)rect.left(),	invHeight * (float)rect.top());		glVertex2f(0, 0);
-	//glTexCoord2f(invWidth * (float)rect.left(),	invHeight * (float)rect.bottom());	glVertex2f(0, rect.height());
-	//glTexCoord2f(invWidth * (float)rect.right(),invHeight * (float)rect.bottom());	glVertex2f(rect.width(), rect.height());
-	//glTexCoord2f(invWidth * (float)rect.right(),invHeight * (float)rect.top());		glVertex2f(rect.width(), 0);
-	//glEnd();
+	glViewport(0, 0, m_buffer->width(), m_buffer->height());
+	QOpenGLFramebufferObject::blitFramebuffer(m_buffer, QRect(QPoint(pos.x(), pos.y()), rect.size()), &ping_pong, rect);
 
-	//m_buffer->bind();
-	//glClear(GL_COLOR_BUFFER_BIT);
-	//glBindTexture(GL_TEXTURE_2D, ping_pong.texture());
-	//glBegin(GL_QUADS);
-	////glTexCoord2f(0, 0); glVertex2f(pos.x(),	pos.y());
-	////glTexCoord2f(0, 1); glVertex2f(pos.x(), pos.y() + rect.height());
-	////glTexCoord2f(1, 1); glVertex2f(pos.x() + rect.width(), pos.y() + rect.height());
-	////glTexCoord2f(1, 0); glVertex2f(pos.x() + rect.width(), pos.y());
-
-	//glTexCoord2f(0, 0); glVertex2f(0, 0);
-	//glTexCoord2f(0, 1); glVertex2f(0, ping_pong.height());
-	//glTexCoord2f(1, 1); glVertex2f(ping_pong.width(), ping_pong.height());
-	//glTexCoord2f(1, 0); glVertex2f(ping_pong.width(), 0);
-	//glEnd();
-
-	//glBindTexture(GL_TEXTURE_2D, 0);
-	//glDisable(GL_TEXTURE_2D);
-
-	//painter.endNativePainting();
+	m_buffer->bind();
+	painter.endNativePainting();
 
 	// Scroll always uses the background color, not the highlight
 	painter.fillRect(exposed, m_background);
