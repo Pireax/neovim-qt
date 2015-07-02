@@ -301,7 +301,7 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 	painter.drawImage(pos, copy, rect);
 
 	// TODO: Rendering to same texture doesnt work, create a ping-pong buffer and swap them
-	
+
 	//QOpenGLFramebufferObject ping_pong(rect.size());
 
 	//painter.beginNativePainting();
@@ -311,28 +311,30 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 	//
 	////m_buffer is inverted so texture coordinates dont line up.
 	//glEnable(GL_TEXTURE_2D);
-	//float invWidth = 1.0f / (float)ping_pong.width();
-	//float invHeight = 1.0f / (float)ping_pong.height();
+	//float invWidth = 1.0f / (float)m_buffer->width();
+	//float invHeight = 1.0f / (float)m_buffer->height();
 
 	//glBegin(GL_QUADS);
-	//glTexCoord2f(invWidth * (float)rect.left(),		invHeight * (float)rect.top());		glVertex2f(0, 0);
-	//glTexCoord2f(invWidth * (float)rect.left(),		invHeight * (float)rect.bottom());	glVertex2f(0, rect.height());
-	//glTexCoord2f(invWidth * (float)rect.right(),	invHeight * (float)rect.bottom());	glVertex2f(rect.width(), rect.height());
-	//glTexCoord2f(invWidth * (float)rect.right(),	invHeight * (float)rect.top());		glVertex2f(rect.width(), 0);
+	//glTexCoord2f(invWidth * (float)rect.left(),	invHeight * (float)rect.top());		glVertex2f(0, 0);
+	//glTexCoord2f(invWidth * (float)rect.left(),	invHeight * (float)rect.bottom());	glVertex2f(0, rect.height());
+	//glTexCoord2f(invWidth * (float)rect.right(),invHeight * (float)rect.bottom());	glVertex2f(rect.width(), rect.height());
+	//glTexCoord2f(invWidth * (float)rect.right(),invHeight * (float)rect.top());		glVertex2f(rect.width(), 0);
 	//glEnd();
-
-	//
 
 	//m_buffer->bind();
+	//glClear(GL_COLOR_BUFFER_BIT);
 	//glBindTexture(GL_TEXTURE_2D, ping_pong.texture());
-	////glColor3f(1, 0, 0);
 	//glBegin(GL_QUADS);
-	//glTexCoord2f(0, 0); glVertex2f(pos.x(),						pos.y());
-	//glTexCoord2f(0, 1); glVertex2f(pos.x(), pos.y() + neovimSize().height()+1);
-	//glTexCoord2f(1, 1); glVertex2f(pos.x() + rect.width(), pos.y() + neovimSize().height()+1);
-	//glTexCoord2f(1, 0); glVertex2f(pos.x() + rect.width(), pos.y());
+	////glTexCoord2f(0, 0); glVertex2f(pos.x(),	pos.y());
+	////glTexCoord2f(0, 1); glVertex2f(pos.x(), pos.y() + rect.height());
+	////glTexCoord2f(1, 1); glVertex2f(pos.x() + rect.width(), pos.y() + rect.height());
+	////glTexCoord2f(1, 0); glVertex2f(pos.x() + rect.width(), pos.y());
+
+	//glTexCoord2f(0, 0); glVertex2f(0, 0);
+	//glTexCoord2f(0, 1); glVertex2f(0, ping_pong.height());
+	//glTexCoord2f(1, 1); glVertex2f(ping_pong.width(), ping_pong.height());
+	//glTexCoord2f(1, 0); glVertex2f(ping_pong.width(), 0);
 	//glEnd();
-	////glColor3f(1, 1, 1);
 
 	//glBindTexture(GL_TEXTURE_2D, 0);
 	//glDisable(GL_TEXTURE_2D);
