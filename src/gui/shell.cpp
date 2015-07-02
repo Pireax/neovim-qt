@@ -6,6 +6,7 @@
 #include <QDesktopWidget>
 #include <QApplication>
 #include <QKeyEvent>
+#include <qopengltexture.h>
 #include "input.h"
 #include "konsole_wcwidth.h"
 
@@ -254,7 +255,6 @@ void Shell::handlePut(const QVariantList& args, QPainter& painter)
 	}
 	// Move cursor ahead
 	m_cursor_pos.setX(m_cursor_pos.x() + 1);
-	update();
 }
 
 /**
@@ -341,7 +341,6 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 
 	// Scroll always uses the background color, not the highlight
 	painter.fillRect(exposed, m_background);
-	update(m_scroll_region);
 }
 
 /** Ready a painter with Neovim settings */
@@ -391,7 +390,6 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 		m_background = color(opargs.at(0).toLongLong(), m_background);
 		m_hg_background = m_background;
 		painter.setBackground(m_hg_background);
-		update();
 	} else if (name == "resize") {
 		if (opargs.size() != 2 || !opargs.at(0).canConvert<quint64>() ||
 				!opargs.at(1).canConvert<quint64>()) {
@@ -407,7 +405,6 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 		setupPainter(painter);
 	} else if (name == "clear") {
 		painter.fillRect(rect(), m_background);
-		update();
 	} else if (name == "bell"){
 		QApplication::beep();
 	} else if (name == "eol_clear") {
@@ -415,7 +412,6 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 		QPoint br(neovimWidth()-1, tl.y()+neovimRowHeight()-1);
 		QRect clearRect = QRect(tl, br);
 		painter.fillRect(clearRect, m_background);
-		update();
 	} else if (name == "cursor_goto"){
 		if (opargs.size() != 2 || !opargs.at(0).canConvert<quint64>() ||
 				!opargs.at(1).canConvert<quint64>()) {
@@ -461,7 +457,6 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 void Shell::setNeovimCursor(quint64 row, quint64 col)
 {
 	m_cursor_pos = QPoint(col, row);
-	update();
 }
 
 void Shell::handleNormalMode(QPainter& painter)
@@ -556,6 +551,8 @@ void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList&
 	painter.end();
 	m_buffer->bindDefault();
 	doneCurrent();
+
+	update();
 }
 
 /**
@@ -645,17 +642,23 @@ void Shell::paintGL()
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glDisable(GL_TEXTURE_2D);
 
-	painter.endNativePainting();
-	
 	QRect cursorRect(neovimCursorTopLeft(), neovimCharSize());
 
 	if (m_insertMode) {
 		cursorRect.setWidth(2);
 	}
 
-	// Bitwise composition is not supported with OpenGL
-	painter.setCompositionMode(QPainter::CompositionMode_Xor);
-	painter.fillRect(cursorRect, m_cursor_color);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ZERO);
+	glBegin(GL_QUADS);
+	glVertex2f(cursorRect.left(), cursorRect.top());
+	glVertex2f(cursorRect.left(), cursorRect.bottom());
+	glVertex2f(cursorRect.right(), cursorRect.bottom());
+	glVertex2f(cursorRect.right(), cursorRect.top());
+	glEnd();
+	glDisable(GL_BLEND);
+
+	painter.endNativePainting();
 }
 
 void Shell::drawRectangle(int w, int h)
