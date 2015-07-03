@@ -40,8 +40,6 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	m_font = f;
 	m_fm = new QFontMetrics(m_font);
 
-	m_image = QImage(neovimSize(), QImage::Format_ARGB32_Premultiplied);
-
 	setAttribute(Qt::WA_KeyCompression, false);
 	setAttribute(Qt::WA_OpaquePaintEvent, true);
 
@@ -310,10 +308,7 @@ void Shell::handleScroll(const QVariantList& args, QPainter& painter)
 
 	painter.beginNativePainting();
 
-	glViewport(0, 0, ping_pong.width(), ping_pong.height());
 	QOpenGLFramebufferObject::blitFramebuffer(&ping_pong, rect, m_buffer, rect);
-
-	glViewport(0, 0, m_buffer->width(), m_buffer->height());
 	QOpenGLFramebufferObject::blitFramebuffer(m_buffer, QRect(QPoint(pos.x(), pos.y()), rect.size()), &ping_pong, rect);
 
 	m_buffer->bind();
@@ -561,6 +556,7 @@ void Shell::initializeGL()
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	glOrtho(0, neovimSize().width(), neovimSize().height(), 0, -1, 1);
+	
 	// change texture coordinate origin to top-left
 	glMatrixMode(GL_TEXTURE);
 	glLoadIdentity();
@@ -584,11 +580,7 @@ void Shell::resizeGL(int w, int h)
 
 	QOpenGLFramebufferObject* newBuffer = new QOpenGLFramebufferObject(neovimSize(), QOpenGLFramebufferObject::CombinedDepthStencil);
 
-	newBuffer->bind();
-	QOpenGLPaintDevice context(neovimSize());
-	QPainter painter(&context);
-	painter.drawImage(QPoint(0, 0), m_buffer->toImage());
-	newBuffer->release();
+	QOpenGLFramebufferObject::blitFramebuffer(newBuffer, QRect(QPoint(0, 0), m_buffer->size()), m_buffer, QRect(QPoint(0, 0), m_buffer->size()));
 
 	m_buffer->~QOpenGLFramebufferObject();
 	m_buffer = newBuffer;
@@ -612,7 +604,6 @@ void Shell::paintGL()
 
 	glEnable(GL_TEXTURE_2D);
 	glBegin(GL_QUADS);
-	//drawRectangle(size().width(), size().height());
 	glTexCoord2f(0, 0); glVertex2f(0, 0);
 	glTexCoord2f(0, 1); glVertex2f(0, m_buffer->height());
 	glTexCoord2f(1, 1); glVertex2f(m_buffer->width(), m_buffer->height());
@@ -639,14 +630,6 @@ void Shell::paintGL()
 	glDisable(GL_BLEND);
 
 	painter.endNativePainting();
-}
-
-void Shell::drawRectangle(int w, int h)
-{
-	glTexCoord2f(0, 0); glVertex2f(0, 0);
-	glTexCoord2f(0, 1); glVertex2f(0, h);
-	glTexCoord2f(1, 1); glVertex2f(w, h);
-	glTexCoord2f(1, 0); glVertex2f(w, 0);
 }
 
 void Shell::keyPressEvent(QKeyEvent *ev)

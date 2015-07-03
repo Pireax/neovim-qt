@@ -77,7 +77,6 @@ protected:
 private:
 	bool m_attached;
         void setAttached(bool);
-		void drawRectangle(int w, int h);
 
 	NeovimConnector *m_nvim;
 	uint64_t m_rows, m_cols;
@@ -87,7 +86,6 @@ private:
 	bool m_font_bold, m_font_italic, m_font_underline;
 	QFontMetrics *m_fm;
 
-	QImage m_image;
 	QOpenGLFramebufferObject* m_buffer;
 
 	// shell bg/fg - updated through redraw:foreground/background
