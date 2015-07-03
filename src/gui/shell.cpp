@@ -75,6 +75,7 @@ Shell::~Shell()
 	if (m_nvim && m_attached) {
 		m_nvim->detachUi();
 	}
+	delete m_buffer;
 }
 
 void Shell::setAttached(bool attached)
@@ -582,7 +583,7 @@ void Shell::resizeGL(int w, int h)
 
 	QOpenGLFramebufferObject::blitFramebuffer(newBuffer, QRect(QPoint(0, 0), m_buffer->size()), m_buffer, QRect(QPoint(0, 0), m_buffer->size()));
 
-	m_buffer->~QOpenGLFramebufferObject();
+	delete m_buffer;
 	m_buffer = newBuffer;
 }
 
