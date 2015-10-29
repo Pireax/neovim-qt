@@ -24,8 +24,9 @@ public:
 	};
 	MsgpackIODevice(QIODevice *, QObject *parent=0);
 	~MsgpackIODevice();
+        static MsgpackIODevice* fromStdinOut(QObject *parent=0);
 
-	bool isOpen() {return m_dev->isOpen();}
+	bool isOpen();
 	QString errorString() const;
 	MsgpackError errorCause() const {return m_error;};
 
@@ -57,12 +58,14 @@ public:
 
 	void setRequestHandler(MsgpackRequestHandler *);
 
+	/** Typedef for msgpack-to-Qvariant decoder @see registerExtType */
 	typedef QVariant (*msgpackExtDecoder)(MsgpackIODevice*, const char* data, quint32 size);
 	void registerExtType(int8_t type, msgpackExtDecoder);
 
 	QList<quint32> pendingRequests() const;
 signals:
 	void error(MsgpackError);
+	/** A notification with the given name and arguments was received */
 	void notification(const QByteArray &name, const QVariantList& args);
 
 protected:
@@ -83,10 +86,16 @@ protected:
 
 protected slots:
 	void setError(MsgpackError err, const QString& msg);
+
 	void dataAvailable();
+	void dataAvailableStdin(const QByteArray&);
+	void dataAvailableFd(int fd);
+
+	void requestTimeout(quint32 id);
 
 private:
-	static int msgpack_write_cb(void* data, const char* buf, unsigned long int len);
+	static int msgpack_write_to_stdout(void* data, const char* buf, unsigned long int len);
+	static int msgpack_write_to_dev(void* data, const char* buf, unsigned long int len);
 
 	quint32 m_reqid;
 	QIODevice *m_dev;

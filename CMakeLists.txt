@@ -7,7 +7,7 @@ endif()
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR
 		"${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wall -Wextra -Wno-unused-parameter -std=c++11 -Wfatal-errors")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wno-unused-parameter -std=c++11 -Wfatal-errors")
 endif()
 
 option(USE_GCOV "Enable gcov support" OFF)
@@ -53,6 +53,11 @@ foreach(CFGNAME ${CMAKE_CONFIGURATION_TYPES})
   set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CFGNAME} ${CMAKE_BINARY_DIR}/lib)
   set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CFGNAME} ${CMAKE_BINARY_DIR}/lib)
 endforeach()
+
+if(MSVC)
+  # Allow use of deprecated function names in MSVC (read/write)
+  add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
+endif()
 
 add_subdirectory(src)
 add_subdirectory(doc)

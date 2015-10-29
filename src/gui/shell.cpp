@@ -7,14 +7,15 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <qopengltexture.h>
+#include "msgpackrequest.h"
 #include "input.h"
 #include "konsole_wcwidth.h"
 
 namespace NeovimQt {
 
 Shell::Shell(NeovimConnector *nvim, QWidget *parent)
-:QOpenGLWidget(parent), m_attached(false), m_nvim(nvim), m_rows(1), m_cols(1),
-	m_font_bold(false), m_font_italic(false), m_font_underline(false), m_fm(NULL),
+:QWidget(parent), m_attached(false), m_nvim(nvim), m_rows(1), m_cols(1),
+	m_font_bold(false), m_font_italic(false), m_font_underline(false), m_font_undercurl(false), m_fm(NULL),
 	m_foreground(Qt::black), m_background(Qt::white),
 	m_hg_foreground(Qt::black), m_hg_background(Qt::white),
 	m_cursor_color(Qt::black), m_cursor_pos(0,0), m_insertMode(false),
@@ -28,22 +29,19 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 	format.setProfile(QSurfaceFormat::NoProfile);
 	setFormat(format);
 
-	QFont f;
-	f.setStyleStrategy(QFont::StyleStrategy(QFont::PreferDefault | QFont::ForceIntegerMetrics) );
-	f.setStyleHint(QFont::TypeWriter);
-	f.setFamily("DejaVu Sans Mono");
-	f.setFixedPitch(true);
-	f.setPointSize(11);
-	f.setKerning(false);
-	f.setFixedPitch(true);
-
-	m_font = f;
+	m_font = createFont("Monospace");
+	m_font.setPointSize(10);
 	m_fm = new QFontMetrics(m_font);
 
 	setAttribute(Qt::WA_KeyCompression, false);
 	setAttribute(Qt::WA_OpaquePaintEvent, true);
 
 	setFocusPolicy(Qt::StrongFocus);
+	setMouseTracking(true);
+	m_mouseclick_timer.setInterval(QApplication::doubleClickInterval());
+	m_mouseclick_timer.setSingleShot(true);
+	connect(&m_mouseclick_timer, &QTimer::timeout,
+			this, &Shell::mouseClickReset);
 
 	// IM Tooltip
 	setAttribute(Qt::WA_InputMethodEnabled, true);
@@ -69,6 +67,79 @@ Shell::Shell(NeovimConnector *nvim, QWidget *parent)
 		neovimIsReady();
 	}
 }
+
+/**
+ * Create QFont for the given family. This is the same
+ * QFont::setFamily but sets some common options to enforce
+ * fixed pitched fonts.
+ */
+QFont Shell::createFont(const QString& family)
+{
+	QFont f;
+	f.setStyleHint(QFont::TypeWriter, QFont::StyleStrategy(QFont::PreferDefault | QFont::ForceIntegerMetrics));
+	f.setFamily(family);
+	f.setFixedPitch(true);
+	f.setKerning(false);
+	return f;
+}
+
+/**
+ * Set the GUI font, or display the current font
+ */
+bool Shell::setGuiFont(const QString& fdesc)
+{
+	if (fdesc.isEmpty()) {
+		QFontInfo fi(m_font);
+		QByteArray desc = m_nvim->encode(QString("%1:h%2\n").arg(fi.family()).arg(m_font.pointSize()));
+		m_nvim->neovimObject()->vim_out_write(desc);
+		return true;
+	}
+	QStringList attrs = fdesc.split(':');
+	if (attrs.size() < 1) {
+		m_nvim->neovimObject()->vim_report_error("Invalid font");
+		return false;
+	}
+
+	QFont f = createFont(attrs.at(0));
+	foreach(QString attr, attrs) {
+		if (attr.size() >= 2 && attr[0] == 'h') {
+			bool ok = false;
+			int height = attr.mid(1).toInt(&ok);
+			if (!ok) {
+				m_nvim->neovimObject()->vim_report_error("Invalid font height");
+				return false;
+			}
+			f.setPointSize(height);
+		}
+	}
+
+	QFontInfo fi(f);
+	if (fi.family().compare(f.family(), Qt::CaseInsensitive) != 0 &&
+			f.family().compare("Monospace", Qt::CaseInsensitive) != 0) {
+		QString errmsg = QString("Unknown font: %1").arg(f.family());
+		m_nvim->neovimObject()->vim_report_error(m_nvim->encode(errmsg));
+		return false;
+	}
+	if ( !fi.fixedPitch() ) {
+		QString errmsg = QString("%1 is not a fixed pitch font").arg(f.family());
+		m_nvim->neovimObject()->vim_report_error(m_nvim->encode(errmsg));
+		return false;
+	}
+
+	if (isBadMonospace(f)) {
+		QString errmsg = QString("Warning: Font \"%1\" reports bad fixed pitch metrics").arg(f.family());
+		m_nvim->neovimObject()->vim_report_error(m_nvim->encode(errmsg));
+	}
+
+	m_font = f;
+	m_fm = new QFontMetrics(f);
+
+	if (m_attached) {
+		resizeNeovim(size());
+	}
+	return true;
+}
+
 
 Shell::~Shell()
 {
@@ -148,6 +219,27 @@ void Shell::neovimIsReady()
 	if (!m_nvim || !m_nvim->neovimObject()) {
 		return;
 	}
+
+	// Check g:Guifont for a font from user settings
+	MsgpackRequest *r = m_nvim->neovimObject()->vim_get_var("Guifont");
+	connect(r, &MsgpackRequest::finished,
+			this, &Shell::neovimFontVarOk);
+	connect(r, &MsgpackRequest::error,
+			this, &Shell::init);
+}
+
+void Shell::neovimFontVarOk(quint32, Function::FunctionId, const QVariant& ret)
+{
+	setGuiFont(m_nvim->decode(ret.toByteArray()));
+	init();
+}
+
+/**
+ * Attach to Neovim UI and connect the necessary signals. This is called
+ * after we know the font metrics (and the expected window dimensions)
+ */
+void Shell::init()
+{
 	// FIXME: Don't set this here, wait for return from ui_attach instead
 	setAttached(true);
 
@@ -159,6 +251,9 @@ void Shell::neovimIsReady()
 
 	connect(m_nvim->neovimObject(), &Neovim::on_ui_try_resize,
 			this, &Shell::neovimResizeFinished);
+
+	// Subscribe to GUI events
+	m_nvim->neovimObject()->vim_subscribe("Gui");
 }
 
 void Shell::neovimError(NeovimConnector::NeovimError err)
@@ -220,7 +315,9 @@ void Shell::handleHighlightSet(const QVariantMap& attrs, QPainter& painter)
 	// TODO: undercurl
 	m_font_bold = attrs.value("bold").toBool();
 	m_font_italic = attrs.value("italic").toBool();
-	m_font_underline = attrs.value("undercurl").toBool();
+	m_font_undercurl = attrs.value("undercurl").toBool();
+	// enable underline ONLY if undercurl is already not on
+	m_font_underline = attrs.value("underline").toBool() && !m_font_undercurl;
 	setupPainter(painter);
 }
 
@@ -250,6 +347,16 @@ void Shell::handlePut(const QVariantList& args, QPainter& painter)
 		QPoint pos(m_cursor_pos.x()*neovimCellWidth(), m_cursor_pos.y()*neovimRowHeight()+m_fm->ascent());
 		painter.drawText(pos, text.at(0));
 
+		if (m_font_undercurl) {
+			// Draw "undercurl" at the bottom of the cell
+			// FIXME: use correct highlight color instead of red
+			// TODO: draw a proper undercurl
+			painter.setPen(QPen(Qt::red, 1, Qt::DashDotDotLine));
+			QPoint start = clipRect.bottomLeft();
+			QPoint end = clipRect.bottomRight();
+			start.ry()--; end.ry()--;
+			painter.drawLine(start, end);
+		}
 		painter.restore();
 	}
 	// Move cursor ahead
@@ -411,11 +518,14 @@ void Shell::handleRedraw(const QByteArray& name, const QVariantList& opargs, QPa
 	} else if (name == "mouse_on"){
 		this->unsetCursor();
 	} else if (name == "mouse_off"){
-		this->setCursor(Qt::BlankCursor);
-	} else if (name == "normal_mode"){
-		handleNormalMode(painter);
-	} else if (name == "insert_mode"){
-		handleInsertMode(painter);
+		this->setCursor(Qt::ForbiddenCursor);
+	} else if (name == "mode_change"){
+		if (opargs.size() != 1) {
+			qWarning() << "Unexpected argument for change_mode:" << opargs;
+			return;
+		}
+		QString mode = m_nvim->decode(opargs.at(0).toByteArray());
+		handleModeChange(mode);
 	} else if (name == "cursor_on"){
 	} else if (name == "set_title"){
 		handleSetTitle(opargs);
@@ -435,14 +545,14 @@ void Shell::setNeovimCursor(quint64 row, quint64 col)
 	m_cursor_pos = QPoint(col, row);
 }
 
-void Shell::handleNormalMode(QPainter& painter)
+void Shell::handleModeChange(const QString& mode)
 {
-	m_insertMode = false;
-}
-
-void Shell::handleInsertMode(QPainter& painter)
-{
-	m_insertMode = true;
+	// TODO: Implement visual aids for other modes
+	if (mode == "insert") {
+		m_insertMode = true;
+	} else {
+		m_insertMode = false;
+	}
 }
 
 void Shell::handleSetTitle(const QVariantList& opargs)
@@ -469,7 +579,14 @@ void Shell::handleBusy(bool busy)
 // FIXME: fix QVariant type conversions
 void Shell::handleNeovimNotification(const QByteArray &name, const QVariantList& args)
 {
-	if (name != "redraw") {
+	if (name == "Gui" && args.size() > 0) {
+		QString guiEvName = m_nvim->decode(args.at(0).toByteArray());
+		if (guiEvName == "SetFont" && args.size() == 2) {
+			QString fdesc = m_nvim->decode(args.at(1).toByteArray());
+			setGuiFont(fdesc);
+		}
+		return;
+	} else if (name != "redraw") {
 		return;
 	}
 
@@ -652,6 +769,107 @@ void Shell::keyPressEvent(QKeyEvent *ev)
 	// FIXME: bytes might not be written, and need to be buffered
 }
 
+void Shell::neovimMouseEvent(QMouseEvent *ev)
+{
+	QPoint pos(ev->x()/neovimCellWidth(),
+			ev->y()/neovimRowHeight());
+	QString inp;
+	if (ev->type() == QEvent::MouseMove) {
+		Qt::MouseButton bt;
+		if (ev->buttons() & Qt::LeftButton) {
+			bt = Qt::LeftButton;
+		} else if (ev->buttons() & Qt::RightButton) {
+			bt = Qt::RightButton;
+		} else if (ev->buttons() & Qt::MidButton) {
+			bt = Qt::MidButton;
+		} else {
+			return;
+		}
+		inp = Input.convertMouse(bt, ev->type(), ev->modifiers(), pos, 0);
+	} else {
+		inp = Input.convertMouse(ev->button(), ev->type(), ev->modifiers(), pos,
+						m_mouseclick_count);
+	}
+	if (inp.isEmpty()) {
+		return;
+	}
+	m_nvim->neovimObject()->vim_input(inp.toLatin1());
+}
+void Shell::mousePressEvent(QMouseEvent *ev)
+{
+	m_mouseclick_timer.start();
+	mouseClickIncrement(ev->button());
+	neovimMouseEvent(ev);
+}
+/** Reset state for mouse N-click tracking */
+void Shell::mouseClickReset()
+{
+	m_mouseclick_count = 0;
+	m_mouseclick_pending = Qt::NoButton;
+	m_mouseclick_timer.stop();
+}
+/**
+ * Increment consecutive mouse click count
+ *
+ * Since Vim only supports up to 4-click events the counter
+ * rotates after 4 clicks.
+ */
+void Shell::mouseClickIncrement(Qt::MouseButton bt)
+{
+	if (m_mouseclick_pending != Qt::NoButton && bt != m_mouseclick_pending) {
+		mouseClickReset();
+	}
+
+	m_mouseclick_pending = bt;
+	if (m_mouseclick_count > 3) {
+		m_mouseclick_count = 1;
+	} else {
+		m_mouseclick_count += 1;
+	}
+}
+void Shell::mouseReleaseEvent(QMouseEvent *ev)
+{
+	neovimMouseEvent(ev);
+}
+void Shell::mouseMoveEvent(QMouseEvent *ev)
+{
+	QPoint pos(ev->x()/neovimCellWidth(),
+			ev->y()/neovimRowHeight());
+	if (pos != m_mouse_pos) {
+		m_mouse_pos = pos;
+		mouseClickReset();
+		neovimMouseEvent(ev);
+	}
+}
+
+void Shell::wheelEvent(QWheelEvent *ev)
+{
+	int horiz, vert;
+	horiz = ev->angleDelta().x();
+	vert = ev->angleDelta().y();
+	if (horiz == 0 && vert == 0) {
+		return;
+	}
+
+	QPoint pos(ev->x()/neovimCellWidth(),
+			ev->y()/neovimRowHeight());
+
+	QString inp;
+	if (vert != 0) {
+		inp += QString("<%1ScrollWheel%2><%3,%4>")
+			.arg(Input.modPrefix(ev->modifiers()))
+			.arg(vert > 0 ? "Up" : "Down")
+			.arg(pos.x()).arg(pos.y());
+	}
+	if (horiz != 0) {
+		inp += QString("<%1ScrollWheel%2><%3,%4>")
+			.arg(Input.modPrefix(ev->modifiers()))
+			.arg(horiz > 0 ? "Right" : "Left")
+			.arg(pos.x()).arg(pos.y());
+	}
+	m_nvim->neovimObject()->vim_input(inp.toLatin1());
+}
+
 void Shell::resizeNeovim(const QSize& newSize)
 {
 	uint64_t cols = newSize.width()/neovimCellWidth();
@@ -698,7 +916,10 @@ void Shell::changeEvent( QEvent *ev)
 
 void Shell::closeEvent(QCloseEvent *ev)
 {
-	if (m_attached) {
+	if (m_attached &&
+		m_nvim->connectionType() == NeovimConnector::SpawnedConnection) {
+		// If attached to a spawned Neovim process, ignore the event
+		// and try to close Neovim as :qa
 		ev->ignore();
 		m_nvim->neovimObject()->vim_command("qa");
 	} else {
@@ -766,6 +987,73 @@ QVariant Shell::inputMethodQuery(Qt::InputMethodQuery query) const
 bool Shell::neovimBusy() const
 {
 	return m_neovimBusy;
+}
+
+/**
+ * Check if a font can be safely used as a fixed pitch font
+ *
+ * This function is not perfect and some broken fonts may still return false,
+ * or font substitution may cause good fonts to fail. The font max/average
+ * metrics are compared with the italic/bold double width variants.
+ */
+bool Shell::isBadMonospace(const QFont& f)
+{
+	QFont fi(f);
+	fi.setItalic(true);
+	QFont fb(f);
+	fb.setBold(true);
+	QFont fbi(fb);
+	fbi.setItalic(true);
+
+	QFontMetrics fm_normal(f);
+	QFontMetrics fm_italic(fi);
+	QFontMetrics fm_boldit(fbi);
+	QFontMetrics fm_bold(fb);
+
+	// Regular
+	if ( fm_normal.averageCharWidth() != fm_normal.maxWidth() ) {
+		QFontInfo info(f);
+		qDebug() << f.family()
+			<< "Average and Maximum font width mismatch for Regular font; QFont::exactMatch() is" << f.exactMatch()
+			<< "Real font is " << info.family() << info.pointSize();
+		return true;
+	}
+
+	// Italic
+	if ( fm_italic.averageCharWidth() != fm_italic.maxWidth() ||
+			fm_italic.maxWidth()*2 != fm_italic.width("MM") ) {
+		QFontInfo info(fi);
+		qDebug() << fi.family() << "Average and Maximum font width mismatch for Italic font; QFont::exactMatch() is" << fi.exactMatch()
+			<< "Real font is " << info.family() << info.pointSize();
+		return true;
+	}
+
+	// Bold
+	if ( fm_bold.averageCharWidth() != fm_bold.maxWidth() ||
+			fm_bold.maxWidth()*2 != fm_bold.width("MM") ) {
+		QFontInfo info(fb);
+		qDebug() << fb.family() << "Average and Maximum font width mismatch for Bold font; QFont::exactMatch() is" << fb.exactMatch()
+			<< "Real font is " << info.family() << info.pointSize();
+		return true;
+	}
+
+	// Bold+Italic
+	if ( fm_boldit.averageCharWidth() != fm_boldit.maxWidth() ||
+			fm_boldit.maxWidth()*2 != fm_boldit.width("MM") ) {
+		QFontInfo info(fbi);
+		qDebug() << fbi.family() << "Average and Maximum font width mismatch for Bold+Italic font; QFont::exactMatch() is" << fbi.exactMatch()
+			<< "Real font is " << info.family() << info.pointSize();
+		return true;
+	}
+
+	if ( fm_normal.maxWidth() != fm_italic.maxWidth() ||
+		fm_normal.maxWidth() != fm_boldit.maxWidth() ||
+		fm_normal.maxWidth() != fm_bold.maxWidth()) {
+		qDebug() << f.family() << "Average and Maximum font width mismatch between font types";
+		return true;
+	}
+
+	return false;
 }
 
 } // Namespace

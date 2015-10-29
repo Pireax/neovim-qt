@@ -3,6 +3,7 @@
 #include "neovimconnectorhelper.h"
 #include "neovimconnector.h"
 #include "msgpackiodevice.h"
+#include "msgpackrequest.h"
 #include "util.h"
 
 namespace NeovimQt {
@@ -20,6 +21,7 @@ NeovimConnectorHelper::NeovimConnectorHelper(NeovimConnector *c)
 {
 }
 
+/** Handle Msgpack-rpc errors when fetching the API metadata */
 void NeovimConnectorHelper::handleMetadataError(quint32 msgid, Function::FunctionId,
 		const QVariant& errobj)
 {
@@ -64,7 +66,12 @@ void NeovimConnectorHelper::handleMetadata(quint32 msgid, Function::FunctionId, 
 		// Get &encoding before we signal readyness
 		connect(m_c->neovimObject(), &Neovim::on_vim_get_option,
 				this, &NeovimConnectorHelper::encodingChanged);
-		m_c->neovimObject()->vim_get_option("encoding");
+		MsgpackRequest *r = m_c->neovimObject()->vim_get_option("encoding");
+		connect(r, &MsgpackRequest::timeout,
+				m_c, &NeovimConnector::fatalTimeout);
+		r->setTimeout(10000);
+	} else {
+		qWarning() << "Error retrieving metadata" << m_c->errorString();
 	}
 }
 
@@ -80,6 +87,8 @@ void NeovimConnectorHelper::encodingChanged(const QVariant&  obj)
 	if (m_c->m_dev->setEncoding(enc_name)) {
 		m_c->m_ready = true;
 		emit m_c->ready();
+	} else {
+		qWarning() << "Unable to set encoding" << obj;
 	}
 }
 

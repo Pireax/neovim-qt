@@ -17,6 +17,10 @@ class NeovimConnector: public QObject
 	friend class Neovim;
 	friend class NeovimConnectorHelper;
 	Q_OBJECT
+	/**
+	 * True if the Neovim instance is ready
+	 * @see neovimObject
+	 */
 	Q_PROPERTY(bool ready READ isReady NOTIFY ready)
 	Q_ENUMS(NeovimError)
 public:
@@ -34,6 +38,7 @@ public:
 		RuntimeMsgpackError,
 	};
 
+	/** Underlying connection used to read Neovim */
         enum NeovimConnectionType {
 		OtherConnection,
 		SpawnedConnection,
@@ -42,10 +47,12 @@ public:
         };
 
 	NeovimConnector(QIODevice* s);
+	NeovimConnector(MsgpackIODevice* s);
 	static NeovimConnector* spawn(const QStringList& params=QStringList());
 	static NeovimConnector* connectToSocket(const QString&);
 	static NeovimConnector* connectToHost(const QString& host, int port);
 	static NeovimConnector* connectToNeovim(const QString& server=QString());
+	static NeovimConnector* fromStdinOut();
 
 	bool canReconnect();
 	NeovimConnector* reconnect();
@@ -62,11 +69,16 @@ public:
 	uint64_t channel();
 	QString decode(const QByteArray&);
 	QByteArray encode(const QString&);
+	NeovimConnectionType connectionType();
 
 signals:
+	/** Emitted when Neovim is ready @see ready */
 	void ready();
 	void error(NeovimError);
 	void processExited(int exitCode);
+
+public slots:
+	void fatalTimeout();
 
 protected:
 	void setError(NeovimError err, const QString& msg);

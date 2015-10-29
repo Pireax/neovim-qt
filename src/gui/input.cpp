@@ -80,6 +80,66 @@ QString InputConv::modPrefix(Qt::KeyboardModifiers mod)
 }
 
 /**
+ * Convert mouse event information into Neovim key notation
+ *
+ * @type is one of the Qt mouse event types
+ * @pos is in Neovim Coordinates
+ * @clickCount is the number of consecutive mouse clicks
+ *   1 for a single click, 2 for a double click, up to 4.
+ *   This value is only used for LeftMouse events.
+ *
+ * see QMouseEvent
+ *
+ * If the event is not valid for Neovim, returns an empty string
+ */
+QString InputConv::convertMouse(Qt::MouseButton bt, QEvent::Type type, Qt::KeyboardModifiers mod, QPoint pos, short clickCount)
+{
+	QString buttonName;
+	switch(bt) {
+	case Qt::LeftButton:
+		// In practice Neovim only supports the clickcount for Left
+		// mouse presses, even if our shell can support other buttons
+		if (clickCount > 1 && clickCount <= 4) {
+			buttonName = QString("%1-Left").arg(clickCount);
+		} else {
+			buttonName += "Left";
+		}
+		break;
+	case Qt::RightButton:
+		buttonName += "Right";
+		break;
+	case Qt::MidButton:
+		buttonName += "Middle";
+		break;
+	case Qt::NoButton:
+		break;
+	default:
+		return "";
+	}
+
+	QString evType;
+	switch(type) {
+	case QEvent::MouseButtonDblClick:
+		// Treat this as a regular MouseButtonPress. Repeated
+		// clicks are handled above.
+	case QEvent::MouseButtonPress:
+		evType += "Mouse";
+		break;
+	case QEvent::MouseButtonRelease:
+		evType += "Release";
+		break;
+	case QEvent::MouseMove:
+		evType += "Drag";
+		break;
+	default:
+		return "";
+	}
+
+	QString inp = QString("<%1%2%3><%4,%5>").arg(modPrefix(mod)).arg(buttonName).arg(evType).arg(pos.x()).arg(pos.y());
+	return inp;
+}
+
+/**
  * Convert Qt key input into Neovim key-notation
  *
  * see QKeyEvent
